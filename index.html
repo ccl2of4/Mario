@@ -1,0 +1,575 @@
+<html>
+<script type = "text/javascript">
+
+//KEY CONSTANTS
+var E = 69;
+var Q = 81;
+var W = 87;
+var A = 65;
+var S = 83;
+var D = 68;
+var ENTER = 13;
+var LEFTARROW = 37;
+var RIGHTARROW = 39;
+var UPARROW = 38;
+var DOWNARROW = 40;
+var SPACE = 32;
+
+//WORLD CONSTANTS
+var WORLDHEIGHT = 500;
+var FRAMERATE = 60;
+var NUM_CPU = 4;
+var ABOVE = 0; var TOP = 0;
+var BELOW = 1; var BOTTOM = 1;
+var BEHIND = 2; var RIGHT = 2;
+var INFRONT = 3; var LEFT = 3;
+
+//PHYSICS CONSTANTS
+var FLYING = false;
+var SPEED = 3;
+var RUNSPEED = 3;
+var JUMPSPEED = 25;
+var GRAVITY = 2;
+var TERMINAL_VELOCITY_Y = 20;
+var TERMINAL_VELOCITY_X = 20;
+
+//OBJECT VARIABLES
+var keyboard; //userInput object
+var map; //Map object to store Structure objects
+var windowViewer; //object that handles scrolling
+var characters; //array for all characters (player and cpu)
+var CPUControllers; //array for cpu characters' AI
+
+function Character(elemID,x,imgArray,runspeed,jumpspeed){
+
+    //constructor
+    var html = "<img id=" + elemID + " src = '' height = 80 width = 46 style = 'visibility:hidden;position:absolute;' />";
+    var temp = document.createElement("div");
+    temp.innerHTML = html;
+    document.getElementById("game").appendChild(temp);
+    this.elem = document.getElementById(elemID);
+    this.runspeed = runspeed;
+    this.jumpspeed = jumpspeed;
+    this.animator = new Animator(this.elem,imgArray);
+    this.physics = new Physics(this.elem,x);
+
+    //movement state variables
+    this.walking = false;
+    this.running = false;
+    this.jumping = false;
+    this.dir = 1;
+
+    //methods
+    this.run = run;
+	this.move = move;
+	this.jump = jump;
+    this.attack = attack;
+    this.update = update;
+    function run(){
+        this.running = this.walking;
+        this.physics.run(this.runspeed);
+    }
+	function move(x){
+        this.walking = true;
+        this.dir = (x > 0 ? 1 : -1);
+        this.physics.move(x);
+	}
+	function jump(){
+        this.jumping = true;
+        this.physics.jump(this.jumpspeed);
+	}
+    function attack(){
+        this.physics.attack();
+    }
+    function update(){
+        if(this.physics.dead())
+            this.physics = new Physics(this.elem,x,this.animator,this.runspeed,this.jumpspeed);
+
+        this.animator.dir = this.dir;
+        this.animator.walking = this.walking;
+        this.animator.running = this.running;
+        this.animator.jumping = this.jumping;
+
+        this.physics.update();
+        this.animator.update();
+
+        this.walking = false;
+        this.running = false;
+        this.jumping = false;
+    }
+}
+
+function Physics(elem,x){
+    this.elem = elem;
+    this.left = x;
+    this.right = this.left + this.elem.width;
+    this.bottom = 200;
+    this.top = this.bottom + this.elem.height;
+
+    this.deltaX = 0;
+    this.deltaY = 0;
+
+    this.elem.style.left = "" + this.left + "px";
+    this.elem.style.top = "" + (WORLDHEIGHT - this.top) + "px";
+
+    this.dead = dead;
+    this.update = update;
+    this.jump = jump;
+    this.attack = attack;
+    this.move = move;
+    this.run = run;
+    this.moveElem = moveElem;
+    this.located = located;
+    this.touching = touching;
+
+    function moveElem(x,y){
+        this.elem.style.left = "" + (this.left + x) + "px";
+        this.elem.style.top = "" + (WORLDHEIGHT - this.top - y) + "px";
+        this.left += x;
+        this.right += x;
+        this.bottom += y;
+        this.top += y;
+    }
+    function dead(){
+        return this.top < 0;
+    }
+    function attack(){
+        for(i = 0; i < characters.length; i++){
+            if(this != characters[i].physics && this.touching(characters[i].physics)){
+                characters[i].top = -1;
+            }
+
+        }
+    }
+    function move(x){
+        this.deltaX += x*SPEED;
+    }
+    function run(runspeed){
+        this.deltaX *= runspeed;
+    }
+    function jump(jumpspeed){
+        var grounded = false;
+        for(i = 0; i < map.structures.length; i++){
+            if(this.located(map.structures[i],ABOVE) && this.touching(map.structures[i],BOTTOM)){
+                this.deltaY = jumpspeed;
+                grounded = true;
+            }
+        }
+        for(i = 0; i < characters.length; i++){
+            if(this != characters[i].physics && this.located(characters[i].physics,ABOVE) && this.touching(characters[i].physics,BOTTOM)){
+                this.deltaY = jumpspeed;
+                grounded = true;
+            }
+
+        }
+        if(!FLYING && !grounded)
+            this.deltaY += GRAVITY/2;
+        else if(FLYING)
+            this.deltaY += GRAVITY + 1;
+    }
+
+    function update(){
+
+        this.deltaY -= GRAVITY;
+
+        //take care of deltaY
+        for(i = 0; i < map.structures.length; i++){
+            var structure = map.structures[i];
+            if(this.located(structure,BELOW))
+                this.deltaY = Math.min(this.deltaY,structure.bottom - this.top);
+            else if(this.located(structure,ABOVE))
+                this.deltaY = Math.max(this.deltaY,structure.top - this.bottom);
+        }
+        for(i = 0; i < characters.length; i++){
+            if(this == characters[i].physics) i++;
+            if(i < characters.length){
+                var charactPhy = characters[i].physics;
+                if(this.located(charactPhy,BELOW))
+                    this.deltaY = Math.min(this.deltaY,charactPhy.bottom - this.top);
+                else if(this.located(charactPhy,ABOVE))
+                    this.deltaY = Math.max(this.deltaY,charactPhy.top - this.bottom);
+            }
+        }
+        var sign = this.deltaY >= 0 ? 1 : -1;
+        this.deltaY = sign*Math.min(TERMINAL_VELOCITY_Y,Math.abs(this.deltaY));
+        this.moveElem(0,this.deltaY);
+
+        //take care of deltaX
+        for(i = 0; i < map.structures.length; i++){
+            var structure = map.structures[i];
+            if(this.located(structure,BEHIND)){
+                this.deltaX = Math.min(this.deltaX,structure.left - this.right);
+                //stair climbing
+                if(this.deltaY == 0 && this.touching(structure,RIGHT) && ((structure.top - this.bottom) < (this.elem.height/4))) this.moveElem(1,structure.top - this.bottom);
+            }
+            else if(this.located(structure,INFRONT)){
+                this.deltaX = Math.max(this.deltaX,structure.right - this.left);
+                //stair climbing
+                if(this.deltaY == 0 && this.touching(structure,LEFT) && ((structure.top - this.bottom) < (this.elem.height/4))) this.moveElem(-1,structure.top - this.bottom);
+            }
+        }
+        for(i = 0; i < characters.length; i++){
+            if(this == characters[i].physics) i++;
+            if(i < characters.length){
+                var charactPhy = characters[i].physics;
+                if(this.located(charactPhy,BEHIND))
+                    this.deltaX = Math.min(this.deltaX,charactPhy.left - this.right);
+                else if(this.located(charactPhy,INFRONT))
+                    this.deltaX = Math.max(this.deltaX,charactPhy.right - this.left);
+            }
+        }
+        var sign = this.deltaX >= 0 ? 1 : -1;
+        this.deltaX = sign*Math.min(TERMINAL_VELOCITY_X,Math.abs(this.deltaX));
+        this.moveElem(this.deltaX,0);
+        this.deltaX = 0;
+
+    }
+
+    //determines if this object is directly above, below, in front, or behind other object
+    function located(other,WHERE){
+        switch(WHERE){
+            case BEHIND:
+                return (this.right <= other.left && this.bottom < other.top && this.top > other.bottom);
+            case INFRONT:
+                return (this.left >= other.right && this.bottom < other.top && this.top > other.bottom);
+            case ABOVE:
+                return (this.bottom >= other.top && this.right > other.left && this.left < other.right);
+            case BELOW:
+                return (this.top <= other.bottom && this.right > other.left && this.left < other.right);
+        }
+    }
+    //determines if this object is touching other object
+    function touching(other,WHERE){
+        switch(WHERE){
+            case RIGHT:
+                return (this.right >= other.left && (this.bottom <= other.top && this.top >= other.bottom));
+            case LEFT:
+                return (this.left <= other.right && (this.bottom <= other.top && this.top >= other.bottom));
+            case TOP:
+                return (this.top >= other.bottom && (this.right >= other.left && this.left <= other.right));
+            case BOTTOM:
+                return (this.bottom <= other.top && (this.right >= other.left && this.left <= other.right));
+            default:
+                return (this.bottom <= other.top && this.top >= other.bottom && this.right >= other.left && this.left <= other.right);
+
+        }
+    }
+}
+function Animator(elem,imgArray){
+    this.elem = elem;
+
+    //store images for animation
+    this.standingImgL = imgArray[0]; this.standingImgR = imgArray[1];
+    this.walkingImgL = imgArray[2]; this.walkingImgR = imgArray[3];
+    this.runningImgL = imgArray[4]; this.runningImgR = imgArray[5];
+    this.jumpingImgL = imgArray[6]; this.jumpingImgR = imgArray[7];
+
+    this.walking = false;
+    this.running = false;
+    this.jumping = false;
+    this.dir = 1; //character faces to the right by default when spawned
+    this.movement = null;
+    this.movementDuration = 0;
+
+    //initialize character animation and make it visible
+    this.elem.src = this.standingImgR;
+    this.elem.style.visibility = "visible";
+
+    this.update = update;
+    function update(){
+        if(this.jumping){
+            this.movement = "jumping";
+            this.elem.src = (this.dir == 1 ? this.jumpingImgR : this.jumpingImgL);
+        }
+        else if(this.running){
+
+            this.movementDuration++;
+            if(this.movement != "running") this.movementDuration = 0;
+            this.movement = "running";
+
+            if(this.movementDuration < 10)
+                this.elem.src = (this.dir == 1 ? this.runningImgR : this.runningImgL);
+            else
+                this.elem.src = (this.dir == 1 ? this.walkingImgR: this.walkingImgL);
+
+            this.movementDuration = (this.movementDuration < 20 ? this.movementDuration + 1 : 0);
+        }
+        else if(this.walking){
+
+            this.movementDuration++;
+            if(this.movement != "walking") this.movementDuration = 0;
+            this.movement = "walking";
+
+            if(this.movementDuration < 20)
+                this.elem.src = (this.dir == 1 ? this.walkingImgR: this.walkingImgL);
+            else
+                this.elem.src = (this.dir == 1 ? this.standingImgR : this.standingImgL);
+
+            this.movementDuration = (this.movementDuration < 40 ? this.movementDuration + 1 : 0);
+
+        }
+        else{
+            this.movement = "standing";
+            this.elem.src = (this.dir == 1 ? this.standingImgR : this.standingImgL);
+        }
+    }
+}
+
+function CPU(character){
+    this.character = character;
+
+    this.update = update;
+    function update(){
+        var deltaX = characters[0].physics.left - this.character.physics.left;
+        if(this.character.physics.top < characters[0].physics.top && Math.abs(this.character.physics.left - characters[0].physics.left) < 100)
+            this.character.jump();
+        this.character.move(deltaX / Math.abs(deltaX));
+        if(Math.abs(deltaX) < 300) this.character.run();
+        this.character.update();
+    }
+}
+
+function Map(map){
+    this.structures = new Array();
+	for(i = 0; i < map.length; i++){
+        this.structures[i] = new Structure(map[i][0],map[i][1],map[i][2],map[i][3],map[i][4]);
+    }
+}
+
+function Structure(src,x,y,width,height){
+    this.left = x;
+    this.bottom = y;
+    this.right = x + width;
+    this.top = y + height;
+
+    //adds structure image to HTML document
+    var html = "<img src = '" + src + "' width = " + width + " height = " + height + " style ='position:absolute;left:"+x+"px;top:"+(WORLDHEIGHT - this.top)+"px;'/>";
+    var temp = document.createElement("div");
+    temp.innerHTML = html;
+    document.getElementById("game").appendChild(temp);
+}
+
+//makes window follow Character parameter
+function WindowViewer(character){
+    this.character = character;
+
+    this.update = update;
+    function update(){
+        window.scrollTo(this.character.physics.left - window.innerWidth/2,(WORLDHEIGHT - this.character.physics.top) - window.innerHeight/2);
+    }
+}
+
+function UserInput(){
+	this.left = false;
+	this.right = false;
+	this.space = false;
+    this.q = false;
+    this.e = false;
+
+	this.down = down;
+	this.up = up;
+    this.Idle = Idle;
+
+    function Idle(){
+        return (!this.right && !this.left && !this.space);
+    }
+	function down(key){
+        if(key.keyCode == DOWNARROW)
+            this.q = true;
+		if(key.keyCode == LEFTARROW)
+			this.left = true;
+		else if(key.keyCode == RIGHTARROW)
+			this.right = true;
+		else if(key.keyCode == SPACE)
+			this.space = true;
+        else if(key.keyCode == E)
+            this.e = true;
+	}
+	function up(key){
+        if(key.keyCode == DOWNARROW)
+            this.q = false;
+		if(key.keyCode == LEFTARROW)
+			this.left = false;
+		else if(key.keyCode == RIGHTARROW)
+			this.right = false;
+		else if(key.keyCode == SPACE)
+			this.space = false;
+        else if(key.keyCode == E)
+            this.e = false;
+	}
+}
+
+function setUpGame() {
+
+    //write the map
+    var mapLayout = new Array();
+    for(i = 0; i < 50; i++)
+        mapLayout[i] = new Array();
+
+    mapLayout[0][0] = "ground.png";
+    mapLayout[0][1] = 0;
+    mapLayout[0][2] = 0;
+    mapLayout[0][3] = 3000;
+    mapLayout[0][4] = 50;
+
+    for(i = 1; i < 30; i++){
+        mapLayout[i][0] = "ground.png";
+        mapLayout[i][1] = i%2 == 0 ? 500 : 700;
+        mapLayout[i][2] = i*120;
+        mapLayout[i][3] = 50;
+        mapLayout[i][4] = 20;
+    }
+
+    for(i = 30; i < 50; i++) {
+        if(i != 42 && i != 43){
+            mapLayout[i][0] = "ground.png";
+            mapLayout[i][1] = (i-29)*40 + 900
+            mapLayout[i][2] = (i-29)*15 + 50;
+            mapLayout[i][3] = 40;
+            mapLayout[i][4] = 15;
+        }
+        else{
+            mapLayout[i][0] = "ground.png";
+            mapLayout[i][1] = 100;
+            mapLayout[i][2] = 900;
+            mapLayout[i][3] = 100;
+            mapLayout[i][4] = 15;
+        }
+    }
+
+    for(i = 0; i < mapLayout.length; i++)
+        WORLDHEIGHT = Math.max(WORLDHEIGHT,500 + mapLayout[i][2] + mapLayout[i][4]);
+
+    map = new Map(mapLayout);
+
+    //initialize characters
+    var imgArrayMario = new Array();
+    imgArrayMario[0] = "mariostand.png";
+    imgArrayMario[1] = "mariostand1.png";
+    imgArrayMario[2] = "mariowalk.png";
+    imgArrayMario[3] = "mariowalk1.png";
+    imgArrayMario[4] = "mariorun.png";
+    imgArrayMario[5] = "mariorun1.png";
+    imgArrayMario[6] = "mariojump.png";
+    imgArrayMario[7] = "mariojump1.png";
+
+    //initialize all characters
+    characters = new Array();
+    CPUControllers = new Array();
+
+    characters[0] = new Character("player",20,imgArrayMario,RUNSPEED,JUMPSPEED);
+    //for(i = 1; i < NUM_CPU + 1; i++)
+        characters[1] = new Character("cpu" + (i - 1),Math.random()*500,imgArrayMario,RUNSPEED/1.5,JUMPSPEED/1.5);
+    //characters[2] = new Character("cpu" + (i - 1),Math.random()*500,imgArrayMario,RUNSPEED/1.5,JUMPSPEED/1.5);
+
+    //for(i = 0; i < NUM_CPU; i++)
+        CPUControllers[0] = new CPU(characters[1]);
+    //CPUControllers[1] = new CPU(characters[2]);
+
+    windowViewer = new WindowViewer(characters[0]);
+
+    //connect keyboard input
+    keyboard = new UserInput();
+
+    //add keyboard listeners
+    window.addEventListener('keydown', function(){keyboard.down(event)}, false);
+    window.addEventListener('keyup', function(){keyboard.up(event)}, false);
+
+
+    play();
+    settings();
+}
+
+function play() {
+    document.getElementById("mainMenu").style.visibility = "hidden";
+    document.getElementById("game").style.visibility = "visible";
+
+	playGame = setInterval(function(){
+
+        //process keyboard input
+		if(keyboard.left)
+            characters[0].move(-1);
+		if(keyboard.right)
+            characters[0].move(1);
+        if(keyboard.q)
+            characters[0].run();
+        if(keyboard.space)
+            characters[0].jump();
+        if(keyboard.e)
+            characters[0].attack();
+
+        //update characters
+        characters[0].update();
+
+        CPUControllers[0].update();
+
+        windowViewer.update();
+
+	},1000/FRAMERATE);
+}
+
+function settings() {
+    if(document.getElementById("settings").style.visibility == "hidden")
+        document.getElementById("settings").style.visibility = "visible";
+    else
+        document.getElementById("settings").style.visibility = "hidden";
+
+    document.getElementById("gravity").value = GRAVITY;
+    document.getElementById("xterm").value = TERMINAL_VELOCITY_X;
+    document.getElementById("yterm").value = TERMINAL_VELOCITY_Y;
+    document.getElementById("speed").value = SPEED;
+    document.getElementById("runspeed").value = RUNSPEED;
+    document.getElementById("jumpspeed").value = JUMPSPEED;
+    if(FLYING) document.getElementById("flyingon").checked = true;
+    else document.getElementById("flyingoff").checked = true;
+}
+function saveSettings() {
+    GRAVITY = parseFloat(document.getElementById("gravity").value);
+    TERMINAL_VELOCITY_X = parseFloat(document.getElementById("xterm").value);
+    TERMINAL_VELOCITY_Y = parseFloat(document.getElementById("yterm").value);
+    SPEED = parseFloat(document.getElementById("speed").value);
+    RUNSPEED = parseFloat(document.getElementById("runspeed").value);
+    JUMPSPEED = parseFloat(document.getElementById("jumpspeed").value);
+    FLYING = document.getElementById("flyingon").checked ? true : false;
+    characters[0].runspeed = RUNSPEED;
+    characters[0].jumpspeed = JUMPSPEED;
+}
+</script>
+
+<body bgcolor="gray" style="overflow:hidden;" onload="setUpGame()">
+
+<embed style = "visibility: hidden;" src="theme.mp3" loop = "true"></embed>
+
+<div id = "mainMenu" style="position:fixed;left:0px;top:50%;width:100%;text-align:center;">
+
+    SUPER MARIO BROS.
+    <br>BY CONNOR LIROT
+    <br><input type = "button" onclick = "play()" value="START" />
+
+</div>
+
+<div id = "settings" style="z-index:10;visibility:hidden;position:fixed;right:0px;top:0px;width:75%;height:30%;text-align:right;">
+
+    <br>GRAVITY (px/s^2): <input type = "text" id = "gravity" value="" /><input type = "button" value = "+" onclick = "document.getElementById('gravity').value++" /><input type = "button" value = "-" onclick = "document.getElementById('gravity').value--" />
+    <br>HORIZONTAL TERMINAL VELOCITY (px/s): <input type = "text" id = "xterm" value="" /><input type = "button" value = "+" onclick = "document.getElementById('xterm').value++" /><input type = "button" value = "-" onclick = "document.getElementById('xterm').value--" />
+    <br>VERTICAL TERMINAL VELOCITY (px/s): <input type = "text" id = "yterm" value="" /><input type = "button" value = "+" onclick = "document.getElementById('yterm').value++" /><input type = "button" value = "-" onclick = "document.getElementById('yterm').value--" />
+    <br>WALKING SPEED (px/s): <input type = "text" value="" id = "speed" value = "" /><input type = "button" value = "+" onclick = "document.getElementById('speed').value++" /><input type = "button" value = "-" onclick = "document.getElementById('speed').value--" />
+    <br>RUNNING SPEED FACTOR (px/s): <input type = "text" value="" id = "runspeed" value = "" /><input type = "button" value = "+" onclick = "document.getElementById('runspeed').value++" /><input type = "button" value = "-" onclick = "document.getElementById('runspeed').value--" />
+    <br>JUMPING POWER (px): <input type = "text" value="" id = "jumpspeed" value = "" /><input type = "button" value = "+" onclick = "document.getElementById('jumpspeed').value++" /><input type = "button" value = "-" onclick = "document.getElementById('jumpspeed').value--" />
+    <br>FLYING: ON<input type = "radio" name="flying" id = "flyingon" /> OFF<input type = "radio" name="flying" id="flyingoff" />
+    <br><input type = "button" value = "APPLY NEW SETTINGS" onclick="saveSettings()" />
+
+</div>
+
+<div id = "game" style="position:absolute;left:0px;top:0px;visibility:hidden;">
+    <div style = "position:fixed;top:0px;left:0px;">
+        <input type = "button" value = "SHOW/HIDE SETTINGS" onclick="settings()"/>
+        <br>CONTROLS:
+        <br>MOVE: ARROW KEYS
+        <br>RUN: DOWN ARROW KEY
+        <br>JUMP: SPACE
+    </div>
+</div>
+
+</body>
+</html>
